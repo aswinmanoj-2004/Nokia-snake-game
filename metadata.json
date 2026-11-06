@@ -1,0 +1,6 @@
+{
+  "name": "Serpent 3310",
+  "description": "Tactile 3D olive-jade and brushed titanium snake game with modern momentum physics, randomized kinetic and gravity obstacles, peristalsis growth animations, and a global leaderboard.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

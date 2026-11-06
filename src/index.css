@@ -1,0 +1,58 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Chakra Petch", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+:root {
+  --bg-studio: #162019;
+  --surface-hud: rgba(14, 21, 17, 0.92);
+  --surface-elevated: rgba(21, 32, 25, 0.96);
+  --border-hairline: rgba(155, 188, 15, 0.24);
+  --accent-jade: #9bbc0f;
+  --accent-amber: #f59e0b;
+  --accent-ruby: #ef4444;
+  --text-primary: #ecf2e6;
+  --text-muted: #98a894;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background-color: var(--bg-studio);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  touch-action: none;
+}
+
+.font-display {
+  font-family: var(--font-display);
+}
+
+.font-mono-tabular {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Custom subtle scrollbars inside modals only */
+.arcade-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.arcade-scroll::-webkit-scrollbar-track {
+  background: rgba(10, 16, 12, 0.5);
+}
+
+.arcade-scroll::-webkit-scrollbar-thumb {
+  background: rgba(155, 188, 15, 0.35);
+  border-radius: 3px;
+}

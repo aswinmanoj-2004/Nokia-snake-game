@@ -1,0 +1,127 @@
+{
+  "entities": {
+    "LeaderboardScore": {
+      "title": "LeaderboardScore",
+      "description": "A verified arcade run score submitted by an authenticated player to the public global leaderboard.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the player who achieved this score."
+        },
+        "playerName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32,
+          "description": "Public arcade display name shown on the global leaderboard."
+        },
+        "score": {
+          "type": "integer",
+          "description": "Final point total earned during the run (0 to 10,000,000)."
+        },
+        "snakeLength": {
+          "type": "integer",
+          "description": "Final articulated snake segment length (3 to 5,000)."
+        },
+        "obstaclesCleared": {
+          "type": "integer",
+          "description": "Count of kinetic bumper deflections, wrap portal warps, and sliding barrier passes."
+        },
+        "difficulty": {
+          "type": "string",
+          "enum": ["classic", "chaos", "overdrive"],
+          "description": "Arena physics difficulty preset for the run."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the score was recorded."
+        }
+      },
+      "required": [
+        "uid",
+        "playerName",
+        "score",
+        "snakeLength",
+        "obstaclesCleared",
+        "difficulty",
+        "createdAt"
+      ]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Private player profile and personal best telemetry restricted to the account owner.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID matching the document identifier."
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "Player display name."
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 128,
+          "description": "Verified account email address (private to owner)."
+        },
+        "bestScore": {
+          "type": "integer",
+          "description": "Highest verified cloud score achieved by the user."
+        },
+        "bestLength": {
+          "type": "integer",
+          "description": "Longest snake segment length achieved by the user."
+        },
+        "runsPlayed": {
+          "type": "integer",
+          "description": "Total completed cloud-synced runs."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the user profile was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the most recent profile update."
+        }
+      },
+      "required": [
+        "uid",
+        "displayName",
+        "email",
+        "bestScore",
+        "bestLength",
+        "runsPlayed",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/leaderboard/{entryId}": {
+      "schema": {
+        "$ref": "#/entities/LeaderboardScore"
+      },
+      "description": "Immutable public arcade high-score entries containing zero PII."
+    },
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/UserProfile"
+      },
+      "description": "Owner-restricted player profile documents storing personal bests and email."
+    }
+  }
+}
