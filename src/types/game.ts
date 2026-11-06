@@ -8,6 +8,27 @@ export type FoodKind = 'berry' | 'amber_crystal' | 'hyper_orb';
 
 export type ObstacleKind = 'bumper' | 'slider' | 'gravity' | 'portal';
 
+export type DailyObjectiveMetric =
+  | 'bumpers_bounced'
+  | 'portals_warped'
+  | 'foods_eaten'
+  | 'snake_length'
+  | 'combo_streak'
+  | 'obstacles_cleared'
+  | 'amber_crystals';
+
+export interface DailyObjectiveSnapshot {
+  dateKey: string;
+  metric: DailyObjectiveMetric;
+  shortTitle: string;
+  description: string;
+  progress: number;
+  target: number;
+  bonusPoints: number;
+  completedThisRun: boolean;
+  completedToday: boolean;
+}
+
 export interface HudSnapshot {
   status: GameStatus;
   score: number;
@@ -25,6 +46,7 @@ export interface HudSnapshot {
   isNewBest: boolean;
   boostEnergy: number; // 0..1
   magnetTimer: number; // seconds remaining
+  dailyObjective: DailyObjectiveSnapshot;
 }
 
 export interface LeaderboardEntry {
@@ -46,4 +68,10 @@ export interface UserProfileSummary {
   bestScore: number;
   bestLength: number;
   runsPlayed: number;
+}
+
+export interface AuthNotice {
+  message: string;
+  isError: boolean;
+  suggestNewTab: boolean;
 }

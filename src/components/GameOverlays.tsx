@@ -13,11 +13,19 @@ import {
   Volume2,
   VolumeX,
 } from 'lucide-react';
-import type { CameraPreset, DifficultyMode, HudSnapshot } from '../types/game';
+import type {
+  AuthNotice,
+  CameraPreset,
+  DifficultyMode,
+  HudSnapshot,
+} from '../types/game';
 
 interface GameOverlaysProps {
   hud: HudSnapshot;
   user: User | null;
+  authBusy: boolean;
+  authNotice: AuthNotice | null;
+  onDismissAuthNotice: () => void;
   dockCollapsed: boolean;
   onToggleDock: () => void;
   onStartGame: (difficulty: DifficultyMode) => void;
@@ -62,6 +70,9 @@ const DIFFICULTIES: Array<{
 export const GameOverlays: React.FC<GameOverlaysProps> = ({
   hud,
   user,
+  authBusy,
+  authNotice,
+  onDismissAuthNotice,
   dockCollapsed,
   onToggleDock,
   onStartGame,
@@ -133,11 +144,12 @@ export const GameOverlays: React.FC<GameOverlaysProps> = ({
               {!user ? (
                 <button
                   type="button"
+                  disabled={authBusy}
                   onClick={() => void onSignIn()}
-                  className="inline-flex items-center gap-2 px-4 py-2 min-h-[40px] text-xs font-semibold text-[#ECF2E6] bg-[#0E1511]/90 hover:bg-[#17231C] border border-white/15 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                  className="inline-flex items-center gap-2 px-4 py-2 min-h-[40px] text-xs font-semibold text-[#ECF2E6] bg-[#0E1511]/90 hover:bg-[#17231C] border border-white/15 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-50"
                 >
                   <LogIn className="w-3.5 h-3.5 text-[#9BBC0F]" aria-hidden="true" />
-                  <span>Google Sign-In</span>
+                  <span>{authBusy ? 'Signing In...' : 'Google Sign-In'}</span>
                 </button>
               ) : (
                 <button
@@ -152,6 +164,34 @@ export const GameOverlays: React.FC<GameOverlaysProps> = ({
               )}
             </div>
           </div>
+
+          {/* Auth Status Notice Banner (if sign-in cancelled or blocked) */}
+          {authNotice && (
+            <div className="pointer-events-auto max-w-lg mt-3 flex items-center justify-between gap-3 px-4 py-2.5 bg-[#0E1511]/95 border border-[#9BBC0F]/30 rounded-lg text-xs text-[#ECF2E6]">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={authNotice.isError ? 'text-[#FCA5A5]' : 'text-[#98A894]'}>
+                  {authNotice.message}
+                </span>
+                {authNotice.suggestNewTab && typeof window !== 'undefined' && (
+                  <a
+                    href={window.location.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-semibold text-[#9BBC0F] hover:underline whitespace-nowrap"
+                  >
+                    Open in New Tab
+                  </a>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={onDismissAuthNotice}
+                className="px-2 py-1 text-xs font-semibold text-[#98A894] hover:text-[#ECF2E6] whitespace-nowrap shrink-0 cursor-pointer"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
 
           {/* Center-Left Title Lockup staged over negative space */}
           <div className="my-auto max-w-lg pointer-events-auto bg-[#0E1511]/90 border border-[#9BBC0F]/25 rounded-xl p-6 md:p-8 shadow-2xl">
@@ -201,6 +241,22 @@ export const GameOverlays: React.FC<GameOverlaysProps> = ({
               <p className="mt-2 text-xs text-[#98A894]">{activeDiffInfo.summary}</p>
             </div>
 
+            {/* Daily Randomized Challenge Preview */}
+            <div className="mt-5 pt-4 border-t border-white/10">
+              <div className="flex items-center justify-between gap-2 text-xs">
+                <span className="font-semibold text-[#98A894]">
+                  Daily Challenge
+                  {hud.dailyObjective.completedToday ? ' · Completed Today' : ''}
+                </span>
+                <span className="font-mono-tabular font-bold text-[#F59E0B]">
+                  +{hud.dailyObjective.bonusPoints} pts
+                </span>
+              </div>
+              <p className="mt-1 text-xs md:text-sm text-[#ECF2E6]">
+                {hud.dailyObjective.description}
+              </p>
+            </div>
+
             {/* Primary CTA Row */}
             <div className="mt-6 flex flex-wrap items-center gap-3">
               <button
@@ -244,8 +300,8 @@ export const GameOverlays: React.FC<GameOverlaysProps> = ({
         <>
           {/* Top Perimeter Telemetry Bar (< 12% viewport footprint) */}
           <div className="flex items-start justify-between gap-4 p-4 md:p-5">
-            {/* Top-Left Score, Length, Combo & Shield Cluster */}
-            <div className="bg-[#0E1511]/90 border border-[#9BBC0F]/25 rounded-xl px-4 py-3 min-w-[215px]">
+            {/* Top-Left Score, Length, Combo, Shield & Daily Objective Cluster */}
+            <div className="bg-[#0E1511]/90 border border-[#9BBC0F]/25 rounded-xl px-4 py-3 w-[252px]">
               <div className="flex items-baseline justify-between gap-4">
                 <span className="text-xs font-semibold text-[#98A894]">Score</span>
                 {hud.combo > 1 && (
@@ -295,6 +351,48 @@ export const GameOverlays: React.FC<GameOverlaysProps> = ({
                       />
                     );
                   })}
+                </div>
+              </div>
+
+              {/* Live Daily Objective Progress */}
+              <div className="mt-2.5 pt-2.5 border-t border-white/10">
+                <div className="flex items-center justify-between gap-2 text-xs">
+                  <span className="font-semibold text-[#98A894]">Daily Goal</span>
+                  <span
+                    className={`font-mono-tabular font-bold ${
+                      hud.dailyObjective.completedThisRun
+                        ? 'text-[#9BBC0F]'
+                        : 'text-[#F59E0B]'
+                    }`}
+                  >
+                    {hud.dailyObjective.completedThisRun
+                      ? `Bonus +${hud.dailyObjective.bonusPoints}`
+                      : `+${hud.dailyObjective.bonusPoints} pts`}
+                  </span>
+                </div>
+                <div className="mt-1 flex items-baseline justify-between gap-2 text-xs">
+                  <span className="text-[#ECF2E6] truncate">
+                    {hud.dailyObjective.shortTitle}
+                  </span>
+                  <span className="font-mono-tabular font-semibold text-[#ECF2E6] shrink-0">
+                    {hud.dailyObjective.progress}/{hud.dailyObjective.target}
+                  </span>
+                </div>
+                <div className="mt-1.5 h-1 w-full bg-[#1B2820] rounded-full overflow-hidden">
+                  <div
+                    className={`h-full transition-transform duration-150 origin-left ${
+                      hud.dailyObjective.completedThisRun
+                        ? 'bg-[#9BBC0F]'
+                        : 'bg-[#F59E0B]'
+                    }`}
+                    style={{
+                      transform: `scaleX(${Math.min(
+                        1,
+                        hud.dailyObjective.progress /
+                          Math.max(1, hud.dailyObjective.target)
+                      )})`,
+                    }}
+                  />
                 </div>
               </div>
 
@@ -622,8 +720,26 @@ export const GameOverlays: React.FC<GameOverlaysProps> = ({
               </div>
             </div>
 
+            {/* Daily Objective Run Status */}
+            <div className="mt-4 flex items-center justify-between gap-3 text-xs">
+              <span className="text-[#98A894] truncate">
+                Daily Challenge · {hud.dailyObjective.shortTitle}
+              </span>
+              <span
+                className={`font-mono-tabular font-semibold shrink-0 ${
+                  hud.dailyObjective.completedThisRun
+                    ? 'text-[#9BBC0F]'
+                    : 'text-[#ECF2E6]'
+                }`}
+              >
+                {hud.dailyObjective.completedThisRun
+                  ? `Completed (+${hud.dailyObjective.bonusPoints} pts)`
+                  : `${hud.dailyObjective.progress}/${hud.dailyObjective.target}`}
+              </span>
+            </div>
+
             {/* Player Tag & Cloud Leaderboard Publish */}
-            <div className="mt-5 pt-5 border-t border-white/10">
+            <div className="mt-4 pt-4 border-t border-white/10">
               <label
                 htmlFor="arcade-tag-input"
                 className="block text-xs font-semibold text-[#ECF2E6]"
@@ -662,11 +778,12 @@ export const GameOverlays: React.FC<GameOverlaysProps> = ({
                 ) : (
                   <button
                     type="button"
+                    disabled={authBusy}
                     onClick={() => void onSignIn()}
-                    className="inline-flex items-center justify-center gap-2 px-4 py-2 min-h-[40px] text-xs font-bold text-[#0F1F12] bg-[#9BBC0F] hover:bg-[#B2D419] rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                    className="inline-flex items-center justify-center gap-2 px-4 py-2 min-h-[40px] text-xs font-bold text-[#0F1F12] bg-[#9BBC0F] hover:bg-[#B2D419] disabled:opacity-50 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
                   >
                     <LogIn className="w-3.5 h-3.5" aria-hidden="true" />
-                    <span>Sign in to Publish</span>
+                    <span>{authBusy ? 'Signing In...' : 'Sign in to Publish'}</span>
                   </button>
                 )}
               </div>
@@ -677,6 +794,33 @@ export const GameOverlays: React.FC<GameOverlaysProps> = ({
                   ? ` · Signed in as ${user.displayName || 'Google Player'}`
                   : ' · Sign in with Google to post globally'}
               </p>
+
+              {!user && authNotice && (
+                <div className="mt-2.5 flex items-center justify-between gap-2 px-3 py-2 bg-[#141F18] border border-white/10 rounded-lg text-xs">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className={authNotice.isError ? 'text-[#FCA5A5]' : 'text-[#98A894]'}>
+                      {authNotice.message}
+                    </span>
+                    {authNotice.suggestNewTab && typeof window !== 'undefined' && (
+                      <a
+                        href={window.location.href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-semibold text-[#9BBC0F] hover:underline whitespace-nowrap"
+                      >
+                        Open in New Tab
+                      </a>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={onDismissAuthNotice}
+                    className="text-xs font-semibold text-[#98A894] hover:text-[#ECF2E6] whitespace-nowrap shrink-0 cursor-pointer"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              )}
 
               {cloudSubmitError && (
                 <p className="mt-2 text-xs text-[#FCA5A5]">{cloudSubmitError}</p>

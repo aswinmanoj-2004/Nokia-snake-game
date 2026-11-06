@@ -1,7 +1,11 @@
 import React, { useState } from 'react';
 import type { User } from 'firebase/auth';
 import { LogIn, LogOut, Trophy, X } from 'lucide-react';
-import type { LeaderboardEntry, UserProfileSummary } from '../types/game';
+import type {
+  AuthNotice,
+  LeaderboardEntry,
+  UserProfileSummary,
+} from '../types/game';
 
 interface LeaderboardModalProps {
   isOpen: boolean;
@@ -12,6 +16,9 @@ interface LeaderboardModalProps {
   cloudLoading: boolean;
   user: User | null;
   userProfile: UserProfileSummary | null;
+  authBusy: boolean;
+  authNotice: AuthNotice | null;
+  onDismissAuthNotice: () => void;
   onSignIn: () => Promise<void>;
   onSignOut: () => Promise<void>;
 }
@@ -42,42 +49,17 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
   cloudLoading,
   user,
   userProfile,
+  authBusy,
+  authNotice,
+  onDismissAuthNotice,
   onSignIn,
   onSignOut,
 }) => {
   const [activeTab, setActiveTab] = useState<'cloud' | 'local'>('cloud');
-  const [authBusy, setAuthBusy] = useState(false);
-  const [authMessage, setAuthMessage] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
   const entries = activeTab === 'cloud' ? cloudEntries : localEntries;
-
-  const handleGoogleSignIn = async () => {
-    setAuthBusy(true);
-    setAuthMessage(null);
-    try {
-      await onSignIn();
-    } catch (err) {
-      const msg =
-        err instanceof Error && err.message.includes('popup-closed-by-user')
-          ? 'Sign-in window was closed before completing.'
-          : 'Unable to complete Google sign-in. Check popup settings and try again.';
-      setAuthMessage(msg);
-    } finally {
-      setAuthBusy(false);
-    }
-  };
-
-  const handleGoogleSignOut = async () => {
-    setAuthBusy(true);
-    setAuthMessage(null);
-    try {
-      await onSignOut();
-    } finally {
-      setAuthBusy(false);
-    }
-  };
 
   return (
     <div
@@ -135,7 +117,7 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
             <button
               type="button"
               disabled={authBusy}
-              onClick={handleGoogleSignOut}
+              onClick={() => void onSignOut()}
               className="inline-flex items-center gap-2 px-4 py-2 min-h-[40px] text-xs font-semibold text-[#ECF2E6] bg-[#1B2A21] hover:bg-[#24382C] border border-white/15 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-50"
             >
               <LogOut className="w-3.5 h-3.5" aria-hidden="true" />
@@ -145,7 +127,7 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
             <button
               type="button"
               disabled={authBusy}
-              onClick={handleGoogleSignIn}
+              onClick={() => void onSignIn()}
               className="inline-flex items-center gap-2 px-4 py-2 min-h-[40px] text-xs font-semibold text-[#0F1F12] bg-[#9BBC0F] hover:bg-[#B2D419] rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-50"
             >
               <LogIn className="w-3.5 h-3.5" aria-hidden="true" />
@@ -154,9 +136,30 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
           )}
         </div>
 
-        {authMessage && (
-          <div className="px-6 py-2.5 bg-[#2A1815] border-b border-[#EF4444]/30 text-xs text-[#FCA5A5]">
-            {authMessage}
+        {authNotice && (
+          <div className="px-6 py-2.5 bg-[#152019] border-b border-white/10 flex items-center justify-between gap-3 text-xs">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={authNotice.isError ? 'text-[#FCA5A5]' : 'text-[#98A894]'}>
+                {authNotice.message}
+              </span>
+              {authNotice.suggestNewTab && typeof window !== 'undefined' && (
+                <a
+                  href={window.location.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-semibold text-[#9BBC0F] hover:underline whitespace-nowrap"
+                >
+                  Open in New Tab
+                </a>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={onDismissAuthNotice}
+              className="text-xs font-semibold text-[#98A894] hover:text-[#ECF2E6] whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              Dismiss
+            </button>
           </div>
         )}
 

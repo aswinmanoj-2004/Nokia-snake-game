@@ -2,6 +2,12 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
 import { soundEngine } from '../audio/soundEngine';
+import {
+  getDailyObjective,
+  isDailyObjectiveCompletedToday,
+  markDailyObjectiveCompleted,
+  type DailyObjectiveDefinition,
+} from '../services/dailyObjectiveService';
 import type {
   CameraPreset,
   DifficultyMode,
@@ -35,7 +41,18 @@ const ARENA_HALF_SIZE = 14.0;
 const WALL_LIMIT = ARENA_HALF_SIZE - 0.58;
 const SEGMENT_SPACING = 0.72;
 const MAX_SNAKE_SEGMENTS = 180;
-const PARTICLE_POOL_SIZE = 96;
+const PARTICLE_POOL_SIZE = 192;
+
+// Existing Nokia olive-jade & phosphor-lime color palette for obstacle impact explosions
+const OLIVE_JADE_EXPLOSION_PALETTE = [
+  0x9bbc0f, // Vibrant Nokia backlit olive-jade highlight
+  0x84cc16, // Luminous jade-lime shard
+  0x63854b, // Backlit olive-jade center glow
+  0x4e6d3b, // Mid-tone olive-jade crystal
+  0x38512a, // Deep shadow olive-jade fragment
+  0xd9f99d, // High-energy phosphor flash spark
+  0x263b16, // Dark biomechanical scale shard
+] as const;
 
 interface PathNode {
   x: number;
@@ -123,6 +140,12 @@ interface PooledParticle {
   vx: number;
   vy: number;
   vz: number;
+  rotX: number;
+  rotY: number;
+  rotZ: number;
+  vRotX: number;
+  vRotY: number;
+  vRotZ: number;
   life: number;
   maxLife: number;
   size: number;
@@ -203,6 +226,12 @@ export class SnakeSimulation {
   private obstaclesCleared = 0;
   private deathReason = '';
   private foodsEatenCount = 0;
+  private dailyObjective: DailyObjectiveDefinition = getDailyObjective();
+  private runBumpersBounced = 0;
+  private runPortalsWarped = 0;
+  private runAmberCrystals = 0;
+  private runPeakCombo = 1;
+  private objectiveCompletedThisRun = false;
 
   // Serpent Kinematics
   private headX = 0;
@@ -342,6 +371,12 @@ export class SnakeSimulation {
         vx: 0,
         vy: 0,
         vz: 0,
+        rotX: 0,
+        rotY: 0,
+        rotZ: 0,
+        vRotX: 0,
+        vRotY: 0,
+        vRotZ: 0,
         life: 0,
         maxLife: 1,
         size: 1,
@@ -607,6 +642,12 @@ export class SnakeSimulation {
     this.obstaclesCleared = 0;
     this.deathReason = '';
     this.foodsEatenCount = 0;
+    this.dailyObjective = getDailyObjective();
+    this.runBumpersBounced = 0;
+    this.runPortalsWarped = 0;
+    this.runAmberCrystals = 0;
+    this.runPeakCombo = 1;
+    this.objectiveCompletedThisRun = false;
 
     this.maxShields = diff === 'classic' ? 3 : diff === 'chaos' ? 2 : 1;
     this.shields = this.maxShields;
@@ -890,6 +931,12 @@ export class SnakeSimulation {
         p.vx = Math.cos(theta) * spd;
         p.vy = THREE.MathUtils.randFloat(2.4, 6.2);
         p.vz = Math.sin(theta) * spd;
+        p.rotX = Math.random() * Math.PI * 2;
+        p.rotY = Math.random() * Math.PI * 2;
+        p.rotZ = Math.random() * Math.PI * 2;
+        p.vRotX = THREE.MathUtils.randFloat(-8, 8);
+        p.vRotY = THREE.MathUtils.randFloat(-8, 8);
+        p.vRotZ = THREE.MathUtils.randFloat(-8, 8);
         p.life = 0;
         p.maxLife = THREE.MathUtils.randFloat(0.32, 0.65);
         p.size = THREE.MathUtils.randFloat(0.75, 1.45);
@@ -898,6 +945,75 @@ export class SnakeSimulation {
         spawned++;
       }
     }
+    if (this.particleMesh.instanceColor) {
+      this.particleMesh.instanceColor.needsUpdate = true;
+    }
+  }
+
+  /**
+   * Multi-layered procedural particle explosion using the Nokia olive-jade palette
+   * whenever the serpent collides with an arena obstacle.
+   */
+  private emitObstacleExplosion(
+    x: number,
+    y: number,
+    z: number,
+    nx = 0,
+    nz = 1,
+    count = 36
+  ): void {
+    let spawned = 0;
+    const paletteLen = OLIVE_JADE_EXPLOSION_PALETTE.length;
+
+    for (let i = 0; i < PARTICLE_POOL_SIZE && spawned < count; i++) {
+      const p = this.particles[i];
+      if (p.active) continue;
+
+      p.active = true;
+      const isShockwaveRing = spawned % 3 === 0;
+      const theta = Math.random() * Math.PI * 2;
+      const jitterRadius = THREE.MathUtils.randFloat(0.05, 0.34);
+
+      p.x = x + Math.cos(theta) * jitterRadius;
+      p.y = y + THREE.MathUtils.randFloat(-0.08, 0.28);
+      p.z = z + Math.sin(theta) * jitterRadius;
+
+      if (isShockwaveRing) {
+        // Fast outward olive-jade shockwave ring skimming above the LCD floor
+        const ringSpd = THREE.MathUtils.randFloat(5.4, 11.2);
+        p.vx = Math.cos(theta) * ringSpd + nx * 1.8;
+        p.vy = THREE.MathUtils.randFloat(1.1, 2.9);
+        p.vz = Math.sin(theta) * ringSpd + nz * 1.8;
+        p.maxLife = THREE.MathUtils.randFloat(0.36, 0.58);
+        p.size = THREE.MathUtils.randFloat(0.7, 1.25);
+      } else {
+        // High-arcing directional olive-jade polyhedral shards
+        const radialSpd = THREE.MathUtils.randFloat(2.4, 8.2);
+        const normalImpulse = THREE.MathUtils.randFloat(1.6, 4.4);
+        p.vx = Math.cos(theta) * radialSpd + nx * normalImpulse;
+        p.vy = THREE.MathUtils.randFloat(3.8, 9.4);
+        p.vz = Math.sin(theta) * radialSpd + nz * normalImpulse;
+        p.maxLife = THREE.MathUtils.randFloat(0.45, 0.82);
+        p.size = THREE.MathUtils.randFloat(0.95, 1.75);
+      }
+
+      p.rotX = Math.random() * Math.PI * 2;
+      p.rotY = Math.random() * Math.PI * 2;
+      p.rotZ = Math.random() * Math.PI * 2;
+      p.vRotX = THREE.MathUtils.randFloat(-12, 12);
+      p.vRotY = THREE.MathUtils.randFloat(-12, 12);
+      p.vRotZ = THREE.MathUtils.randFloat(-12, 12);
+      p.life = 0;
+
+      const shadeHex =
+        OLIVE_JADE_EXPLOSION_PALETTE[
+          Math.floor(Math.random() * paletteLen)
+        ];
+      p.color.setHex(shadeHex);
+      this.particleMesh.setColorAt(i, p.color);
+      spawned++;
+    }
+
     if (this.particleMesh.instanceColor) {
       this.particleMesh.instanceColor.needsUpdate = true;
     }
@@ -1253,12 +1369,13 @@ export class SnakeSimulation {
       const rz = dirZ - 1.85 * dot * nz;
       this.heading = Math.atan2(-rx, -rz);
       this.shakeIntensity = Math.max(this.shakeIntensity, 0.16);
-      this.emitBurst(this.headX, 0.35, this.headZ, 0x9bbc0f, 10);
+      this.emitObstacleExplosion(this.headX, 0.42, this.headZ, nx, nz, 26);
       soundEngine.playBumperBounce();
       return false;
     }
 
     // Head-on wall slam
+    this.emitObstacleExplosion(this.headX, 0.48, this.headZ, nx, nz, 36);
     return this.applyHazardDamage(nx, nz, 'Perimeter Titanium Rail Impact');
   }
 
@@ -1291,11 +1408,20 @@ export class SnakeSimulation {
           obs.compressionVel = 6.5;
           this.surgeTimer = 0.48;
           this.shakeIntensity = Math.max(this.shakeIntensity, 0.24);
-          this.emitBurst(obs.x + nx * obs.radius, 0.45, obs.z + nz * obs.radius, 0xf59e0b, 16);
+          this.emitObstacleExplosion(
+            obs.x + nx * obs.radius,
+            0.48,
+            obs.z + nz * obs.radius,
+            nx,
+            nz,
+            36
+          );
 
           if (this.status === 'PLAYING') {
             this.obstaclesCleared++;
+            this.runBumpersBounced++;
             this.addScore(50 * this.combo);
+            this.evaluateDailyObjective();
             soundEngine.playBumperBounce();
           }
         }
@@ -1305,20 +1431,21 @@ export class SnakeSimulation {
           if (dist < obs.radius) {
             const partner = this.obstacles[obs.partnerIndex];
             if (partner && partner.kind === 'portal') {
-              const burstColor = obs.pairIndex === 0 ? 0x9bbc0f : 0xf59e0b;
-              this.emitBurst(obs.x, 0.45, obs.z, burstColor, 20);
+              this.emitObstacleExplosion(obs.x, 0.45, obs.z, -dirX, -dirZ, 28);
 
               this.headX = partner.x + dirX * 1.45;
               this.headZ = partner.z + dirZ * 1.45;
               this.portalCooldown = 0.88;
               this.pathNodes.unshift({ x: this.headX, z: this.headZ, jumpBreak: true });
 
-              this.emitBurst(partner.x, 0.45, partner.z, burstColor, 20);
+              this.emitObstacleExplosion(partner.x, 0.45, partner.z, dirX, dirZ, 28);
               this.shakeIntensity = Math.max(this.shakeIntensity, 0.18);
 
               if (this.status === 'PLAYING') {
                 this.obstaclesCleared++;
+                this.runPortalsWarped++;
                 this.addScore(75 * this.combo);
+                this.evaluateDailyObjective();
                 soundEngine.playPortalWarp();
               }
               break;
@@ -1335,6 +1462,14 @@ export class SnakeSimulation {
           const nz = dz / dist;
           this.headX = obs.x + nx * (minDist + 0.1);
           this.headZ = obs.z + nz * (minDist + 0.1);
+          this.emitObstacleExplosion(
+            obs.x + nx * obs.coreRadius,
+            0.52,
+            obs.z + nz * obs.coreRadius,
+            nx,
+            nz,
+            38
+          );
           if (this.status === 'TITLE') {
             this.heading = Math.atan2(-nx, -nz);
           } else {
@@ -1368,6 +1503,7 @@ export class SnakeSimulation {
 
           this.headX += wnx * (Math.min(overlapX, overlapZ) + 0.08);
           this.headZ += wnz * (Math.min(overlapX, overlapZ) + 0.08);
+          this.emitObstacleExplosion(this.headX, 0.46, this.headZ, wnx, wnz, 34);
 
           const impactDot = Math.abs(dirX * wnx + dirZ * wnz);
           if (impactDot < 0.56 || this.status === 'TITLE') {
@@ -1376,10 +1512,10 @@ export class SnakeSimulation {
             const rz = dirZ - 1.85 * dot * wnz;
             this.heading = Math.atan2(-rx, -rz);
             this.shakeIntensity = Math.max(this.shakeIntensity, 0.16);
-            this.emitBurst(this.headX, 0.4, this.headZ, 0xef4444, 12);
             if (this.status === 'PLAYING') {
               this.obstaclesCleared++;
               this.addScore(30 * this.combo);
+              this.evaluateDailyObjective();
               soundEngine.playBumperBounce();
             }
           } else {
@@ -1404,6 +1540,7 @@ export class SnakeSimulation {
       if (dist < 0.66) {
         const nx = dist > 0.001 ? dx / dist : 0;
         const nz = dist > 0.001 ? dz / dist : 1;
+        this.emitObstacleExplosion(this.headX, 0.44, this.headZ, nx, nz, 32);
         return this.applyHazardDamage(nx, nz, 'Self-Loop Collision');
       }
     }
@@ -1424,7 +1561,6 @@ export class SnakeSimulation {
       this.heading = Math.atan2(-nx, -nz);
       this.headX += nx * 0.45;
       this.headZ += nz * 0.45;
-      this.emitBurst(this.headX, 0.45, this.headZ, 0xef4444, 24);
       soundEngine.playShieldImpact();
       this.emitHud(true);
       return false;
@@ -1564,14 +1700,19 @@ export class SnakeSimulation {
       this.combo = Math.min(8, this.combo + 1);
       this.comboTimer = this.comboDuration;
       this.foodsEatenCount++;
+      this.runPeakCombo = Math.max(this.runPeakCombo, this.combo);
 
-      if (f.kind === 'amber_crystal' && this.shields < this.maxShields) {
-        this.shields++;
+      if (f.kind === 'amber_crystal') {
+        this.runAmberCrystals++;
+        if (this.shields < this.maxShields) {
+          this.shields++;
+        }
       }
       if (f.kind === 'hyper_orb') {
         this.magnetTimer = 9.0;
       }
 
+      this.evaluateDailyObjective();
       soundEngine.playEat(this.combo, f.kind);
 
       // Progressive randomized obstacle spawning every 4 foods eaten!
@@ -1606,6 +1747,38 @@ export class SnakeSimulation {
     if (this.score > this.highScore) {
       this.highScore = this.score;
       this.isNewBest = true;
+    }
+  }
+
+  private getDailyObjectiveProgress(): number {
+    switch (this.dailyObjective.metric) {
+      case 'bumpers_bounced':
+        return this.runBumpersBounced;
+      case 'portals_warped':
+        return this.runPortalsWarped;
+      case 'foods_eaten':
+        return this.foodsEatenCount;
+      case 'snake_length':
+        return this.length;
+      case 'combo_streak':
+        return this.runPeakCombo;
+      case 'obstacles_cleared':
+        return this.obstaclesCleared;
+      case 'amber_crystals':
+        return this.runAmberCrystals;
+    }
+  }
+
+  private evaluateDailyObjective(): void {
+    if (this.status !== 'PLAYING' || this.objectiveCompletedThisRun) return;
+    const progress = this.getDailyObjectiveProgress();
+    if (progress >= this.dailyObjective.target) {
+      this.objectiveCompletedThisRun = true;
+      this.addScore(this.dailyObjective.bonusPoints);
+      markDailyObjectiveCompleted(this.dailyObjective.dateKey);
+      soundEngine.playObjectiveComplete();
+      this.emitBurst(this.headX, 0.72, this.headZ, 0xf59e0b, 28);
+      this.emitHud(true);
     }
   }
 
@@ -1730,15 +1903,28 @@ export class SnakeSimulation {
         continue;
       }
 
-      p.vy -= 14.0 * dt;
+      p.vy -= 15.5 * dt;
       p.x += p.vx * dt;
-      p.y = Math.max(0.06, p.y + p.vy * dt);
+      p.y += p.vy * dt;
       p.z += p.vz * dt;
 
+      // Crisp bounce rebound off the backlit Nokia LCD glass floor
+      if (p.y <= 0.06 && p.vy < 0) {
+        p.y = 0.06;
+        p.vy = -p.vy * 0.42;
+        p.vx *= 0.78;
+        p.vz *= 0.78;
+      }
+
+      p.rotX += p.vRotX * dt;
+      p.rotY += p.vRotY * dt;
+      p.rotZ += p.vRotZ * dt;
+
       const t = 1 - p.life / p.maxLife;
+      const scaleCurve = t < 0.25 ? t / 0.25 : 1;
       _dummyObj.position.set(p.x, p.y, p.z);
-      _dummyObj.rotation.set(p.life * 6, p.life * 4, 0);
-      _dummyObj.scale.setScalar(p.size * t);
+      _dummyObj.rotation.set(p.rotX, p.rotY, p.rotZ);
+      _dummyObj.scale.setScalar(p.size * scaleCurve * (0.4 + 0.6 * t));
       _dummyObj.updateMatrix();
       this.particleMesh.setMatrixAt(i, _dummyObj.matrix);
     }
@@ -1838,13 +2024,22 @@ export class SnakeSimulation {
 
   private emitHud(force: boolean): void {
     void force;
+    const rawProgress = this.getDailyObjectiveProgress();
+    const clampedProgress = Math.min(this.dailyObjective.target, rawProgress);
+    const completedToday =
+      this.objectiveCompletedThisRun ||
+      isDailyObjectiveCompletedToday(this.dailyObjective.dateKey);
+
     this.onHudUpdate({
       status: this.status,
       score: this.score,
       highScore: this.highScore,
       length: this.length,
       combo: this.combo,
-      comboProgress: this.combo > 1 ? THREE.MathUtils.clamp(this.comboTimer / this.comboDuration, 0, 1) : 0,
+      comboProgress:
+        this.combo > 1
+          ? THREE.MathUtils.clamp(this.comboTimer / this.comboDuration, 0, 1)
+          : 0,
       shields: this.shields,
       maxShields: this.maxShields,
       obstaclesCleared: this.obstaclesCleared,
@@ -1855,6 +2050,17 @@ export class SnakeSimulation {
       isNewBest: this.isNewBest,
       boostEnergy: this.boostEnergy,
       magnetTimer: this.magnetTimer,
+      dailyObjective: {
+        dateKey: this.dailyObjective.dateKey,
+        metric: this.dailyObjective.metric,
+        shortTitle: this.dailyObjective.shortTitle,
+        description: this.dailyObjective.description,
+        progress: clampedProgress,
+        target: this.dailyObjective.target,
+        bonusPoints: this.dailyObjective.bonusPoints,
+        completedThisRun: this.objectiveCompletedThisRun,
+        completedToday,
+      },
     });
   }
 

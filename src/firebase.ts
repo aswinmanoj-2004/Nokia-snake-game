@@ -104,14 +104,115 @@ export function subscribeAuth(callback: (user: User | null) => void): () => void
   return onAuthStateChanged(auth, callback);
 }
 
-export async function signInWithGoogle(): Promise<User> {
-  const result = await signInWithPopup(auth, googleProvider);
-  await ensureUserProfile(result.user);
-  return result.user;
+export interface SignInResult {
+  user: User | null;
+  cancelled: boolean;
+  code: string | null;
+  errorMessage: string | null;
+}
+
+let activeSignInPromise: Promise<SignInResult> | null = null;
+const inFlightProfileSyncs = new Map<string, Promise<UserProfileSummary | null>>();
+
+function getAuthErrorDetails(err: unknown): {
+  cancelled: boolean;
+  code: string | null;
+  errorMessage: string;
+} {
+  const code =
+    typeof err === 'object' && err !== null && 'code' in err
+      ? String((err as { code?: unknown }).code || '')
+      : '';
+
+  if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+    return {
+      cancelled: true,
+      code,
+      errorMessage:
+        'Google sign-in popup was closed before completing. Your scores continue saving locally.',
+    };
+  }
+
+  if (code === 'auth/popup-blocked') {
+    return {
+      cancelled: false,
+      code,
+      errorMessage:
+        'Pop-up was blocked by your browser. Allow pop-ups for this site or open in a new tab to sign in.',
+    };
+  }
+
+  if (code === 'auth/unauthorized-domain') {
+    return {
+      cancelled: false,
+      code,
+      errorMessage:
+        'This preview domain is not authorized for Google Sign-In in Firebase Authentication.',
+    };
+  }
+
+  if (code === 'auth/operation-not-allowed') {
+    return {
+      cancelled: false,
+      code,
+      errorMessage:
+        'Google Sign-In is not enabled for this Firebase project.',
+    };
+  }
+
+  if (code === 'auth/network-request-failed') {
+    return {
+      cancelled: false,
+      code,
+      errorMessage:
+        'Network error while contacting Google Sign-In. Check your connection and try again.',
+    };
+  }
+
+  return {
+    cancelled: false,
+    code: code || null,
+    errorMessage: 'Unable to complete Google sign-in right now. Please try again.',
+  };
+}
+
+export async function signInWithGoogle(): Promise<SignInResult> {
+  if (activeSignInPromise) {
+    return activeSignInPromise;
+  }
+
+  activeSignInPromise = (async (): Promise<SignInResult> => {
+    try {
+      const result = await signInWithPopup(auth, googleProvider);
+      await ensureUserProfile(result.user).catch(() => null);
+      return {
+        user: result.user,
+        cancelled: false,
+        code: null,
+        errorMessage: null,
+      };
+    } catch (error) {
+      const details = getAuthErrorDetails(error);
+      return {
+        user: null,
+        cancelled: details.cancelled,
+        code: details.code,
+        errorMessage: details.errorMessage,
+      };
+    } finally {
+      activeSignInPromise = null;
+    }
+  })();
+
+  return activeSignInPromise;
 }
 
 export async function signOutUser(): Promise<void> {
-  await signOut(auth);
+  try {
+    await signOut(auth);
+  } catch {
+    // Ignore transient sign-out failures
+  }
 }
 
 function sanitizePlayerName(raw: string | null | undefined): string {
@@ -134,44 +235,57 @@ function sanitizeEmail(raw: string | null | undefined): string {
 
 export async function ensureUserProfile(user: User): Promise<UserProfileSummary | null> {
   if (!user || !user.uid) return null;
-  const path = `users/${user.uid}`;
-  const ref = doc(db, 'users', user.uid);
-  try {
-    const snap = await getDoc(ref);
-    if (!snap.exists()) {
-      const displayName = sanitizeDisplayName(user.displayName);
-      const email = sanitizeEmail(user.email);
-      await setDoc(ref, {
-        uid: user.uid,
-        displayName,
-        email,
-        bestScore: 0,
-        bestLength: 4,
-        runsPlayed: 0,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
+
+  const existingTask = inFlightProfileSyncs.get(user.uid);
+  if (existingTask) {
+    return existingTask;
+  }
+
+  const task = (async (): Promise<UserProfileSummary | null> => {
+    const path = `users/${user.uid}`;
+    const ref = doc(db, 'users', user.uid);
+    try {
+      const snap = await getDoc(ref);
+      if (!snap.exists()) {
+        const displayName = sanitizeDisplayName(user.displayName);
+        const email = sanitizeEmail(user.email);
+        await setDoc(ref, {
+          uid: user.uid,
+          displayName,
+          email,
+          bestScore: 0,
+          bestLength: 4,
+          runsPlayed: 0,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+        return {
+          uid: user.uid,
+          displayName,
+          email,
+          bestScore: 0,
+          bestLength: 4,
+          runsPlayed: 0,
+        };
+      }
+      const data = snap.data();
       return {
         uid: user.uid,
-        displayName,
-        email,
-        bestScore: 0,
-        bestLength: 4,
-        runsPlayed: 0,
+        displayName: String(data.displayName || 'Arcade Pilot'),
+        email: String(data.email || ''),
+        bestScore: Number(data.bestScore || 0),
+        bestLength: Number(data.bestLength || 4),
+        runsPlayed: Number(data.runsPlayed || 0),
       };
+    } catch (error) {
+      handleFirestoreError(error, OperationType.GET, path);
     }
-    const data = snap.data();
-    return {
-      uid: user.uid,
-      displayName: String(data.displayName || 'Arcade Pilot'),
-      email: String(data.email || ''),
-      bestScore: Number(data.bestScore || 0),
-      bestLength: Number(data.bestLength || 4),
-      runsPlayed: Number(data.runsPlayed || 0),
-    };
-  } catch (error) {
-    handleFirestoreError(error, OperationType.GET, path);
-  }
+  })().finally(() => {
+    inFlightProfileSyncs.delete(user.uid);
+  });
+
+  inFlightProfileSyncs.set(user.uid, task);
+  return task;
 }
 
 export async function fetchUserProfile(uid: string): Promise<UserProfileSummary | null> {

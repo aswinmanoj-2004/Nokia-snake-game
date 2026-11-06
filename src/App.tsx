@@ -10,6 +10,7 @@ import {
   subscribeGlobalLeaderboard,
   submitCloudScore,
 } from './firebase';
+import { createInitialDailyObjectiveSnapshot } from './services/dailyObjectiveService';
 import {
   getLocalBestScore,
   getLocalLeaderboard,
@@ -19,6 +20,7 @@ import {
 } from './services/leaderboardService';
 import { SnakeSimulation } from './three/SnakeSimulation';
 import type {
+  AuthNotice,
   CameraPreset,
   DifficultyMode,
   HudSnapshot,
@@ -47,6 +49,7 @@ export default function App() {
     isNewBest: false,
     boostEnergy: 1,
     magnetTimer: 0,
+    dailyObjective: createInitialDailyObjectiveSnapshot(),
   }));
 
   const [dockCollapsed, setDockCollapsed] = useState(false);
@@ -62,8 +65,11 @@ export default function App() {
   const [cloudError, setCloudError] = useState<string | null>(null);
 
   // Firebase Auth & Profile State
+  const [authReady, setAuthReady] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfileSummary | null>(null);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authNotice, setAuthNotice] = useState<AuthNotice | null>(null);
   const [playerTag, setPlayerTag] = useState<string>(() => getSavedPlayerTag());
 
   // Run Cloud Submission State
@@ -89,7 +95,9 @@ export default function App() {
   useEffect(() => {
     const unsub = subscribeAuth((nextUser) => {
       setUser(nextUser);
+      setAuthReady(true);
       if (nextUser) {
+        setAuthNotice(null);
         if (nextUser.displayName) {
           const cleanTag = savePlayerTag(nextUser.displayName.slice(0, 16));
           setPlayerTag(cleanTag);
@@ -111,8 +119,9 @@ export default function App() {
     return unsub;
   }, []);
 
-  // Subscribe to Real-Time Global Firestore Leaderboard
+  // Subscribe to Real-Time Global Firestore Leaderboard once auth is ready
   useEffect(() => {
+    if (!authReady) return;
     setCloudLoading(true);
     const unsub = subscribeGlobalLeaderboard(
       (entries) => {
@@ -129,7 +138,7 @@ export default function App() {
       }
     );
     return unsub;
-  }, []);
+  }, [authReady]);
 
   // Initialize Isolated 3D WebGL Canvas Simulation Once
   useEffect(() => {
@@ -219,15 +228,44 @@ export default function App() {
   }, []);
 
   const handleSignIn = useCallback(async () => {
-    const signedInUser = await signInWithGoogle();
-    if (signedInUser.displayName) {
-      const saved = savePlayerTag(signedInUser.displayName.slice(0, 16));
-      setPlayerTag(saved);
+    setAuthBusy(true);
+    setAuthNotice(null);
+    try {
+      const result = await signInWithGoogle();
+      if (result.user) {
+        if (result.user.displayName) {
+          const saved = savePlayerTag(result.user.displayName.slice(0, 16));
+          setPlayerTag(saved);
+        }
+      } else if (result.errorMessage) {
+        const isEmbedded =
+          typeof window !== 'undefined' && window.self !== window.top;
+        setAuthNotice({
+          message: result.errorMessage,
+          isError: !result.cancelled,
+          suggestNewTab:
+            isEmbedded &&
+            (result.code === 'auth/popup-closed-by-user' ||
+              result.code === 'auth/popup-blocked'),
+        });
+      }
+    } finally {
+      setAuthBusy(false);
     }
   }, []);
 
   const handleSignOut = useCallback(async () => {
-    await signOutUser();
+    setAuthBusy(true);
+    setAuthNotice(null);
+    try {
+      await signOutUser();
+    } finally {
+      setAuthBusy(false);
+    }
+  }, []);
+
+  const handleDismissAuthNotice = useCallback(() => {
+    setAuthNotice(null);
   }, []);
 
   return (
@@ -258,6 +296,9 @@ export default function App() {
       <GameOverlays
         hud={hud}
         user={user}
+        authBusy={authBusy}
+        authNotice={authNotice}
+        onDismissAuthNotice={handleDismissAuthNotice}
         dockCollapsed={dockCollapsed}
         onToggleDock={() => setDockCollapsed((c) => !c)}
         onStartGame={(diff) => {
@@ -294,6 +335,9 @@ export default function App() {
         cloudLoading={cloudLoading}
         user={user}
         userProfile={userProfile}
+        authBusy={authBusy}
+        authNotice={authNotice}
+        onDismissAuthNotice={handleDismissAuthNotice}
         onSignIn={handleSignIn}
         onSignOut={handleSignOut}
       />
