@@ -154,6 +154,7 @@ interface PooledParticle {
 
 // Pre-allocated scratch math helpers (Zero GC in requestAnimationFrame loop)
 const _v3A = new THREE.Vector3();
+const _v3B = new THREE.Vector3();
 const _camTargetPos = new THREE.Vector3();
 const _camTargetLook = new THREE.Vector3();
 const _camCurrentPos = new THREE.Vector3(0, 22, 21);
@@ -252,9 +253,14 @@ export class SnakeSimulation {
   private nextFoodId = 1;
   private obstacles: ArenaObstacle[] = [];
 
-  // Juice, Hitstop & Camera Shake
+  // Juice, Hitstop & Brushed-Titanium Camera Shake
   private hitstopTimer = 0;
   private shakeIntensity = 0;
+  private shakeDirX = 0;
+  private shakeDirZ = 0;
+  private shakePhase = 0;
+  private highSpeedShake = 0;
+  private highSpeedPhase = 0;
   private chaseBank = 0;
   private wallFlash = { north: 0, south: 0, east: 0, west: 0 };
   private elapsed = 0;
@@ -664,6 +670,11 @@ export class SnakeSimulation {
     this.magnetTimer = 0;
     this.hitstopTimer = 0;
     this.shakeIntensity = 0;
+    this.shakeDirX = 0;
+    this.shakeDirZ = 0;
+    this.shakePhase = 0;
+    this.highSpeedShake = 0;
+    this.highSpeedPhase = 0;
     this.chaseBank = 0;
     this.pulses = [];
     this.wallFlash = { north: 0, south: 0, east: 0, west: 0 };
@@ -1217,9 +1228,11 @@ export class SnakeSimulation {
     const boostMult = boosting ? 1.48 : 1.0;
     const surgeMult = this.surgeTimer > 0 ? 1.24 : 1.0;
     const currentSpeed = baseSpeed * boostMult * surgeMult;
+    this.speed = currentSpeed;
 
     let vx = -Math.sin(this.heading) * currentSpeed;
     let vz = -Math.cos(this.heading) * currentSpeed;
+    let fieldStress = 0;
 
     // Step Obstacles & Gravitational Pull
     for (let i = 0; i < this.obstacles.length; i++) {
@@ -1272,6 +1285,7 @@ export class SnakeSimulation {
             vx += (dx / dist) * pull * dt * 4.5;
             vz += (dz / dist) * pull * dt * 4.5;
             this.heading = Math.atan2(-vx, -vz);
+            fieldStress = Math.max(fieldStress, falloff * 0.45);
           }
         }
       } else if (obs.kind === 'portal') {
@@ -1279,6 +1293,21 @@ export class SnakeSimulation {
         obs.rig.haloRing.position.y = 0.48 + Math.sin(this.elapsed * 3.5 + obs.pairIndex) * 0.08;
         obs.rig.haloRing.rotation.z = this.elapsed * 1.4;
       }
+    }
+
+    // Update continuous high-speed & magnetic-field chassis camera rumble
+    if (this.status === 'PLAYING') {
+      const overSpeed = THREE.MathUtils.clamp((currentSpeed - 7.8) / 5.8, 0, 1);
+      const boostFactor = boosting ? 0.56 : 0;
+      const surgeFactor = this.surgeTimer > 0 ? 0.68 * (this.surgeTimer / 0.48) : 0;
+      const targetSpeedShake = THREE.MathUtils.clamp(
+        overSpeed * 0.65 + boostFactor + surgeFactor + fieldStress,
+        0,
+        1
+      );
+      this.highSpeedShake = THREE.MathUtils.damp(this.highSpeedShake, targetSpeedShake, 10, dt);
+    } else {
+      this.highSpeedShake = THREE.MathUtils.damp(this.highSpeedShake, 0, 12, dt);
     }
 
     // Advance Snake Head Position
@@ -1368,7 +1397,7 @@ export class SnakeSimulation {
       const rx = dirX - 1.85 * dot * nx;
       const rz = dirZ - 1.85 * dot * nz;
       this.heading = Math.atan2(-rx, -rz);
-      this.shakeIntensity = Math.max(this.shakeIntensity, 0.16);
+      this.triggerCameraShake(this.status === 'PLAYING' ? 0.25 : 0.08, nx, nz);
       this.emitObstacleExplosion(this.headX, 0.42, this.headZ, nx, nz, 26);
       soundEngine.playBumperBounce();
       return false;
@@ -1407,7 +1436,12 @@ export class SnakeSimulation {
           obs.compression = 1.0;
           obs.compressionVel = 6.5;
           this.surgeTimer = 0.48;
-          this.shakeIntensity = Math.max(this.shakeIntensity, 0.24);
+          const impactSpeedFactor = THREE.MathUtils.clamp(spd / 9.2, 0.9, 1.45);
+          this.triggerCameraShake(
+            (this.status === 'PLAYING' ? 0.34 : 0.1) * impactSpeedFactor,
+            nx,
+            nz
+          );
           this.emitObstacleExplosion(
             obs.x + nx * obs.radius,
             0.48,
@@ -1439,7 +1473,7 @@ export class SnakeSimulation {
               this.pathNodes.unshift({ x: this.headX, z: this.headZ, jumpBreak: true });
 
               this.emitObstacleExplosion(partner.x, 0.45, partner.z, dirX, dirZ, 28);
-              this.shakeIntensity = Math.max(this.shakeIntensity, 0.18);
+              this.triggerCameraShake(this.status === 'PLAYING' ? 0.24 : 0.08, dirX, dirZ);
 
               if (this.status === 'PLAYING') {
                 this.obstaclesCleared++;
@@ -1472,6 +1506,7 @@ export class SnakeSimulation {
           );
           if (this.status === 'TITLE') {
             this.heading = Math.atan2(-nx, -nz);
+            this.triggerCameraShake(0.08, nx, nz);
           } else {
             if (this.applyHazardDamage(nx, nz, 'Gravity Core Monolith Impact')) return true;
           }
@@ -1511,7 +1546,7 @@ export class SnakeSimulation {
             const rx = dirX - 1.85 * dot * wnx;
             const rz = dirZ - 1.85 * dot * wnz;
             this.heading = Math.atan2(-rx, -rz);
-            this.shakeIntensity = Math.max(this.shakeIntensity, 0.16);
+            this.triggerCameraShake(this.status === 'PLAYING' ? 0.28 : 0.08, wnx, wnz);
             if (this.status === 'PLAYING') {
               this.obstaclesCleared++;
               this.addScore(30 * this.combo);
@@ -1547,6 +1582,28 @@ export class SnakeSimulation {
     return false;
   }
 
+  private triggerCameraShake(intensity: number, nx = 0, nz = 0): void {
+    const normLen = Math.hypot(nx, nz);
+    if (normLen > 0.0001) {
+      const inx = nx / normLen;
+      const inz = nz / normLen;
+      if (this.shakeIntensity < 0.04) {
+        this.shakeDirX = inx;
+        this.shakeDirZ = inz;
+        this.shakePhase = 0;
+      } else {
+        const bx = this.shakeDirX * 0.5 + inx;
+        const bz = this.shakeDirZ * 0.5 + inz;
+        const bLen = Math.hypot(bx, bz);
+        if (bLen > 0.0001) {
+          this.shakeDirX = bx / bLen;
+          this.shakeDirZ = bz / bLen;
+        }
+      }
+    }
+    this.shakeIntensity = Math.min(1.15, Math.max(this.shakeIntensity, intensity));
+  }
+
   private applyHazardDamage(nx: number, nz: number, reason: string): boolean {
     if (this.invulnTimer > 0) {
       this.heading = Math.atan2(-nx, -nz);
@@ -1557,7 +1614,7 @@ export class SnakeSimulation {
       this.shields--;
       this.invulnTimer = 1.25;
       this.hitstopTimer = 0.048; // 48ms crisp simulation hitstop
-      this.shakeIntensity = 0.46;
+      this.triggerCameraShake(0.56, nx, nz);
       this.heading = Math.atan2(-nx, -nz);
       this.headX += nx * 0.45;
       this.headZ += nz * 0.45;
@@ -1570,7 +1627,7 @@ export class SnakeSimulation {
     this.deathReason = reason;
     this.status = 'GAME_OVER';
     this.hitstopTimer = 0.065;
-    this.shakeIntensity = 0.68;
+    this.triggerCameraShake(0.82, nx, nz);
     this.emitBurst(this.headX, 0.5, this.headZ, 0xef4444, 36);
     soundEngine.playGameOver();
     this.emitHud(true);
@@ -1990,30 +2047,77 @@ export class SnakeSimulation {
     _camCurrentLook.y = THREE.MathUtils.damp(_camCurrentLook.y, _camTargetLook.y, posLambda + 2, dt);
     _camCurrentLook.z = THREE.MathUtils.damp(_camCurrentLook.z, _camTargetLook.z, posLambda + 2, dt);
 
-    // Apply decaying impact camera shake
-    if (this.shakeIntensity > 0.002) {
-      _v3A.set(
-        (Math.random() - 0.5) * this.shakeIntensity,
-        (Math.random() - 0.5) * this.shakeIntensity * 0.7,
-        (Math.random() - 0.5) * this.shakeIntensity
-      );
+    // Apply directional brushed-titanium impact trauma + high-speed movement camera shake
+    const isChase = this.cameraPreset === 'chase' && this.status === 'PLAYING';
+    let shakeRoll = 0;
+
+    if (this.status !== 'PAUSED') {
+      this.shakePhase += dt * 62;
+      this.highSpeedPhase += dt * THREE.MathUtils.clamp(this.speed / 8.0, 0.85, 1.55);
+    }
+
+    const activeImpact = this.shakeIntensity > 0.002;
+    const activeSpeed = this.status === 'PLAYING' && this.highSpeedShake > 0.015;
+
+    if (activeImpact || activeSpeed) {
+      _v3A.set(0, 0, 0);
+
+      if (activeImpact) {
+        const impactEnv = Math.min(0.68, this.shakeIntensity);
+        const impactScale = isChase ? 0.56 : 0.94;
+        const vertScale = isChase ? 0.4 : 0.62;
+
+        // Directional chassis recoil along the collision surface normal + damped harmonic ring
+        const recoilWave = Math.cos(this.shakePhase * 0.52) * impactEnv * impactScale * 0.55;
+        const ringPrimary = Math.sin(this.shakePhase) * 0.65 + Math.sin(this.shakePhase * 1.73) * 0.35;
+        const ringOrth = Math.cos(this.shakePhase * 1.19) * 0.65 + Math.sin(this.shakePhase * 2.07) * 0.35;
+        const ringVert = Math.cos(this.shakePhase * 1.37) * 0.72 + Math.sin(this.shakePhase * 2.31) * 0.28;
+
+        // Combine normal recoil + orthogonal shear tremor
+        const perpX = -this.shakeDirZ;
+        const perpZ = this.shakeDirX;
+        const tremorAmp = impactEnv * impactScale * 0.65;
+
+        _v3A.x += this.shakeDirX * recoilWave + (this.shakeDirX * ringPrimary + perpX * ringOrth) * tremorAmp;
+        _v3A.y += ringVert * impactEnv * vertScale;
+        _v3A.z += this.shakeDirZ * recoilWave + (this.shakeDirZ * ringPrimary + perpZ * ringOrth) * tremorAmp;
+
+        shakeRoll += Math.sin(this.shakePhase * 0.86) * impactEnv * (isChase ? 0.046 : 0.018);
+
+        if (this.status !== 'PAUSED') {
+          this.shakeIntensity *= Math.exp(-12.5 * dt);
+          if (this.shakeIntensity <= 0.002) {
+            this.shakeIntensity = 0;
+          }
+        }
+      }
+
+      if (activeSpeed) {
+        const speedAmp = this.highSpeedShake * (isChase ? 0.048 : 0.082);
+        const sp = this.highSpeedPhase;
+        _v3A.x += (Math.sin(sp * 54) * 0.65 + Math.sin(sp * 83) * 0.35) * speedAmp;
+        _v3A.y += (Math.cos(sp * 67) * 0.7 + Math.sin(sp * 97) * 0.3) * speedAmp * 0.72;
+        _v3A.z += (Math.sin(sp * 49 + 1.4) * 0.65 + Math.cos(sp * 79) * 0.35) * speedAmp;
+        shakeRoll += Math.sin(sp * 38) * this.highSpeedShake * (isChase ? 0.0055 : 0.0025);
+      }
+
       this.camera.position.copy(_camCurrentPos).add(_v3A);
-      this.shakeIntensity *= Math.exp(-13 * dt);
+      _v3B.copy(_camCurrentLook).addScaledVector(_v3A, 0.32);
+      this.camera.lookAt(_v3B);
     } else {
       this.shakeIntensity = 0;
       this.camera.position.copy(_camCurrentPos);
+      this.camera.lookAt(_camCurrentLook);
     }
 
-    this.camera.lookAt(_camCurrentLook);
-
-    // Subtle banking roll in Chase Cam
-    const targetBank =
-      this.cameraPreset === 'chase' && this.status === 'PLAYING'
-        ? THREE.MathUtils.clamp(-this.angularVel * 0.032, -0.14, 0.14)
-        : 0;
+    // Subtle banking roll in Chase Cam + impact/speed rotational tremor
+    const targetBank = isChase
+      ? THREE.MathUtils.clamp(-this.angularVel * 0.032, -0.14, 0.14)
+      : 0;
     this.chaseBank = THREE.MathUtils.damp(this.chaseBank, targetBank, 10, dt);
-    if (Math.abs(this.chaseBank) > 0.0005) {
-      this.camera.rotateZ(this.chaseBank);
+    const totalRoll = this.chaseBank + shakeRoll;
+    if (Math.abs(totalRoll) > 0.0004) {
+      this.camera.rotateZ(totalRoll);
     }
 
     if (Math.abs(this.camera.fov - targetFov) > 0.05) {
